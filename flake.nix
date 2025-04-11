@@ -36,9 +36,10 @@
         buildDependencies = with pkgs; [
           hunspellDicts.en_US
           hugo
+          git
         ];
 
-        themeCongo = pkgs.fetchFromGitHub {
+        theme = pkgs.fetchFromGitHub {
           owner = "jpanther";
           repo = "congo";
           rev = "v2.11.0";
@@ -49,11 +50,12 @@
           inherit version src;
           name = "lois.postu.la";
           buildInputs = buildDependencies;
+          leaveDotGit = true;
 
           buildPhase = ''
             mkdir -p themes
-            cp -r ${themeCongo} themes/congo
-            ${pkgs.hugo}/bin/hugo
+            cp -r ${theme} themes/theme
+            ${pkgs.hugo}/bin/hugo --minify
           '';
 
           installPhase = ''
@@ -80,19 +82,21 @@
                   ...
                 }:
                 {
-                  packages = buildDependencies;
+                  packages = with pkgs; [
+                    updatecli
+                    azure-cli
+                  ] ++ buildDependencies;
 
                   pre-commit.hooks = {
                     actionlint.enable = true;
-                    hunspell.enable = true;
-                    markdownlint.enable = true;
+                    # hunspell.enable = true;
                   };
 
                   enterShell = ''
                     [ ! -f .env ] || export $(grep -v '^#' .env | xargs)
                     rm -f $DEVENV_ROOT/themes/congo
                     mkdir -p $DEVENV_ROOT/themes
-                    ln -s ${themeCongo} $DEVENV_ROOT/themes/congo
+                    ln -s ${theme} $DEVENV_ROOT/themes/theme
                     echo 👋 Welcome to lois Development Environment. 🚀
                     echo
                     echo If you see this message, it means your are inside the Nix shell ❄️.

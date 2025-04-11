@@ -4,6 +4,7 @@
 ### Devenv ###
 .devenv
 .direnv
+.pre-commit-config.yaml
 
 ### Hugo ###
 # Generated files by hugo
