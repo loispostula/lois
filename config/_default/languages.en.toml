@@ -1,0 +1,24 @@
+languageCode = "en"
+languageName = "English"
+languageDirection = "ltr"
+weight = 1
+
+title = "lois.postu.la"
+# copyright = "Copy, _right?_ :thinking_face:"
+
+[params]
+  dateFormat = "2 January 2006"
+
+  # mainSections = ["section1", "section2"]
+  # description = "My awesome website"
+
+[params.author]
+  name = "Loïs Postula"
+  image = "img/author.png"
+  headline = "Yes, I'm a DevOps Engineer. No, I'm Not a Bot (Probably)."
+  bio = "A little bit about you"
+  links = [
+    { email = "mailto:lois@postu.la" },
+    { link = "https://lois.postu.la/" },
+    { github = "https://github.com/loispostula" },
+   ]
