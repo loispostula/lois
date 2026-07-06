@@ -2,23 +2,153 @@
 :PROPERTIES:
 :PROPERTIES:
 
+* Home
+:PROPERTIES:
+:EXPORT_HUGO_SECTION: /
+:EXPORT_FILE_NAME: _index
+:END:
+I work on infrastructure, build systems, CI/CD, security, observability, and the operational foundations that let teams ship without creating future debt.
 * About
 :PROPERTIES:
 :EXPORT_HUGO_SECTION: /
 :EXPORT_FILE_NAME: about
 :END:
-** Hi
-Hello, I'm Loïs
+I'm Loïs Postula, a platform engineer based in Belgium.
+
+I work on the technical foundations behind reliable software delivery: self-hosted and cloud infrastructure, CI/CD, build systems, observability, security, private deployments, and the operational work required to keep software useful after it has been deployed.
+
+At Foresight Spatial Labs, I work across the platform layer that supports engineering and customer deployments: infrastructure, automation, monitoring, delivery foundations, and security-related operational controls.
+
+My background started in product engineering and backend work before moving toward cloud and platform engineering. I still enjoy being close to the machinery: building systems, debugging weird failures, and making complex things repeatable.
+
+I write occasionally about infrastructure-as-code, automation, build systems, and the practical trade-offs behind running software in the real world.
+* Talks
+:PROPERTIES:
+:EXPORT_HUGO_SECTION: /
+:EXPORT_FILE_NAME: talks
+:END:
+** RustConf 2026
+[[https://rustconf2026.sched.com/event/2KHtn][RustConf 2026]], Montréal — September 2026. Details coming soon.
 * Posts
 :PROPERTIES:
 :EXPORT_HUGO_AUTO_SET_LASTMOD: :t
 :END:
+** TODO Self-hosted GPU runners that burst to the cloud with KEDA :kubernetes:keda:gpu:nixos:k3s:
+:PROPERTIES:
+:EXPORT_FILE_NAME: self-hosted-gpu-runners-cloud-burst-with-keda
+:END:
+GPU compute is expensive to rent and awkward to own. Simulation work makes it worse: the queue is empty for hours, then a batch of jobs lands and everything is needed at once. Paying cloud GPU prices around the clock for a workload that is bursty by nature is hard to justify. Sizing an on-premise fleet for the peak means most of the cards sit idle most of the time.
+
+The setup below splits the difference: own the baseline, rent the peaks — and fail over to the cloud when the owned hardware misbehaves. A small pool of self-hosted GPU nodes in a [[https://k3s.io/][k3s]] cluster carries the steady-state load. When the pool cannot keep up, or goes down entirely, [[https://keda.sh/][KEDA]] scales extra GPU jobs into a cloud Kubernetes cluster, then scales them back to zero once the primary recovers. You pay cloud rates only for the peaks and outages you actually hit.
+
+# TODO: architecture diagram — on-prem k3s GPU pool + work queue + cloud burst cluster
+*** Why not just pick one
+- *Pure cloud GPU.* Simple to operate, but you pay a premium 24/7 for capacity you use in bursts, and you inherit quota and availability limits on the exact instance types you need.
+- *Pure on-premise.* Cheap per hour once bought, but capacity is fixed. The moment demand exceeds the cards you own, jobs queue behind them and there is no relief valve.
+
+The hybrid keeps the cheap, always-on baseline on hardware you control and treats the cloud as an overflow buffer that costs nothing when idle.
+*** The hard part: GPUs in containers on NixOS
+Scheduling GPU pods is easy. Making the GPU actually usable /inside/ the container on NixOS is where the time goes.
+
+The nodes run NixOS and join k3s. GPU access is wired through the [[https://github.com/cncf-tags/container-device-interface][Container Device Interface (CDI)]] rather than the legacy runtime hook:
+#+begin_src nix
+hardware.nvidia-container-toolkit = {
+  enable = true;
+  mount-nvidia-executables = true;
+  # UUID device names so the k8s-device-plugin's CDI annotations match
+  # the kind registered by the NixOS CDI generator (nixpkgs#288037).
+  extraArgs = [ "--device-name-strategy=uuid" ];
+};
+#+end_src
+
+The NVIDIA [[https://github.com/NVIDIA/k8s-device-plugin][k8s-device-plugin]] runs as a DaemonSet and advertises ~nvidia.com/gpu~ on the GPU nodes.
+
+The part that cost real debugging time: our workload renders through Vulkan/~wgpu~, and NixOS's auto-generated CDI spec omits the Vulkan ICD, the EGL vendor config, and the glvnd dispatcher libraries. Without them the driver refuses to expose a Vulkan instance and the workload reports "no GPU adapter" despite a healthy ~nvidia-smi~. The fix is to bind-mount them into the container at distro-standard paths (see nixpkgs#383085 for the upstream discussion):
+#+begin_src nix
+hardware.nvidia-container-toolkit.mounts = [
+  { hostPath = "/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json";
+    containerPath = "/etc/vulkan/icd.d/nvidia_icd.json"; }
+  { hostPath = "/run/opengl-driver/lib/libEGL.so.1";
+    containerPath = "/usr/lib/x86_64-linux-gnu/libEGL.so.1"; }
+  # ... glvnd dispatchers (libGLX, libOpenGL, libGLdispatch) at the multiarch path
+];
+#+end_src
+
+# TODO: expand — full mount list, why vulkan_beta driver package was needed, CDI config.toml override
+
+GPU nodes are tainted so only GPU work lands on them; the workload tolerates the taint and selects the pool by label:
+#+begin_src yaml
+nodeSelector:
+  payload: task_runner
+tolerations:
+  - key: sku
+    operator: Equal
+    value: gpu
+    effect: NoSchedule
+#+end_src
+*** The fallback: burst and failover
+The baseline runner is an ordinary workload pinned to the self-hosted GPU pool, kept at a minimum of one replica so there is always something draining the queue.
+
+The cloud tier is not only for peaks. It covers two different failures, and the same KEDA ~ScaledJob~ handles both with two triggers, scaling from zero:
+1. *Backlog.* The self-hosted pool is healthy but outpaced — more work arrived than the owned cards can drain in time. This is the "rent the peak" case.
+2. *Outage.* The self-hosted pool is down or erroring and draining nothing at all. This is the "keep running when the datacentre doesn't" case.
+
+Queue depth alone only half-covers the outage: if the on-prem workers stop consuming, the queue eventually grows and trips the backlog trigger. But a growing queue is ambiguous — it could be a large batch or a dead cluster — and waiting for the backlog to cross a threshold is slow when the pool is actually down. So the fallback also watches a health signal: a Prometheus query for the rate at which the primary pool is consuming work. If that rate drops to zero while jobs are pending, KEDA fails over to the cloud immediately, without waiting for the backlog to build.
+#+begin_src yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: sim-fallback
+spec:
+  jobTargetRef:
+    template:
+      spec:
+        nodeSelector: { payload: task_runner }
+        tolerations:
+          - { key: sku, operator: Equal, value: gpu, effect: NoSchedule }
+        containers:
+          - name: worker
+            image: registry.example.com/blast-sim:latest   # sanitized
+  pollingInterval: 1
+  maxReplicaCount: 10          # cost guardrail — cap the burst
+  triggers:
+    # 1. Backlog: on-prem healthy but outpaced
+    - type: rabbitmq
+      metadata:
+        queueName: sim-jobs
+        mode: QueueLength
+        value: "1"
+    # 2. Outage: on-prem down or not consuming while work is pending
+    #    (illustrative PromQL — the real query lives in our metrics backend)
+    - type: prometheus
+      metadata:
+        serverAddress: https://metrics.example.com/prometheus
+        threshold: "1"
+        query: |
+          (sum(sim_jobs_ready) > 0)
+          and (sum(rate(sim_jobs_processed_total{pool="self-hosted"}[2m])) == 0)
+#+end_src
+
+KEDA scales on whichever trigger is hotter, so a backlog and an outage both push jobs to the cloud, and everything drains back to zero once the primary pool recovers.
+
+The same shape composes into tiers ordered by cost. The primary is the self-hosted GPU pool; the cloud is the last-resort failover. A second self-hosted site can sit between them as a cheaper failover before you reach for cloud pricing — each tier is just another scale target with its own health trigger.
+
+# TODO: real PromQL for the health signal + how the tiers hand off
+# TODO: how baseline vs fallback share the same queue without double-processing
+*** Cost guardrails and failure modes
+Scaling to zero is only safe if the edges are handled:
+- *Cap the burst.* ~maxReplicaCount~ is a spend limit as much as a scaling limit — a runaway or poison-pill queue should not be able to spend the month in an afternoon.
+- *Cold starts are real.* A fresh cloud GPU node pulling a multi-gigabyte CUDA image adds minutes before the first job runs. Tune ~pollingInterval~ and cooldown against how long a job takes and how much queue latency is acceptable.
+- *Draining and stuck jobs.* GPU jobs do not preempt cleanly; set a ~backoffLimit~ and make jobs idempotent so a killed burst node re-queues rather than corrupts.
+- *Watch the right signals.* Queue depth, GPU utilization on the baseline pool, and cost-per-burst are the three graphs that tell you whether the split is tuned correctly.
+
+# TODO: outcome — steady-state cost vs peak, what the split saved, what you'd change
 ** DONE Infrastructure-As-Code drift resolution using updatecli :updatecli:iac:
 SCHEDULED: <2025-04-11 Fri>
 :PROPERTIES:
 :EXPORT_FILE_NAME: iac-drift-resolution-using-updatecli
 :END:
-Managing your infrastructure using Infrastructure-As-Code (IaC) offers mutliple benefits: version control, repeatability, code-review, disaster recovery.
+Managing your infrastructure using Infrastructure-As-Code (IaC) offers multiple benefits: version control, repeatability, code-review, disaster recovery.
 
 But what happens when external factors – database server version update, automatic upgrade of a key component from a cloud provider – modify your infrastructure outside of your IaC configuration?
 
@@ -39,7 +169,7 @@ resource "azurerm_kubernetes_cluster" "this" {
 #+end_src
 The important part is the ~automatic_upgrade_channel~ argument that is set to patch. This enable the [[https://learn.microsoft.com/en-us/azure/aks/auto-upgrade-cluster][cluster auto-upgrade]] mechanism in Azure and your Cluster will automatically upgrade based on the channel configuration.
 **** Issue with the setup
-Anytime the cluster is auto-upgraded, we need to go in the configuration, update the value and rerun a ~terraform apply~, otherwise we might revert the cluster to it's previous version.
+Anytime the cluster is auto-upgraded, we need to go in the configuration, update the value and rerun a ~terraform apply~, otherwise we might revert the cluster to its previous version.
 #+begin_src bash
 ?> terraform plan
 Note: Objects have changed outside of Terraform
@@ -82,9 +212,10 @@ state, without changing any real infrastructure.
 - You perform side-effect using [[https://www.updatecli.io/docs/plugins/actions/github/][~action~]]
 
 You compose those core elements into a pipeline manifest that updatecli can run
+#+caption: updatecli pipeline: source, condition, target, and action stages
 [[file:/img/updatecli_pipeline.png]]
 
-One of the major benefits of ~updatecli~ is it's wide variety of plugins, for each core components, you can use different plugins:
+One of the major benefits of ~updatecli~ is its wide variety of plugins, for each core component, you can use different plugins:
 - [[https://www.updatecli.io/docs/plugins/resource/csv/][~csv~]]
 - [[https://www.updatecli.io/docs/plugins/resource/helm_chart/][~helm chart~]]
 - [[https://www.updatecli.io/docs/plugins/resource/npm/][~npm~]]
@@ -94,7 +225,7 @@ One of the major benefits of ~updatecli~ is it's wide variety of plugins, for ea
 
 **** Pipeline
 ***** Source
-To solve our issue, we first need to get the current version of the kubernetes cluster, this could done using [[https://learn.microsoft.com/en-us/cli/azure/][~azure-cli~]]
+To solve our issue, we first need to get the current version of the kubernetes cluster, this could be done using [[https://learn.microsoft.com/en-us/cli/azure/][~azure-cli~]]
 
 #+begin_src bash
 az aks show --resource-group rg-dev --name my-aks-cluster-dev --query kubernetesVersion | tr -d '"'
@@ -288,7 +419,7 @@ targets:
       path: resource.azurerm_kubernetes_cluster.this.kubernetes_version
 
 #+end_src
-We've added an ~scm~ configuration to pull our Infrastructure-As-Code configuration from our vsc. And we've added an ~action~ resource to create a pull request with our changes.
+We've added an ~scm~ configuration to pull our Infrastructure-As-Code configuration from our VCS. And we've added an ~action~ resource to create a pull request with our changes.
 
 
 **** Alternative
@@ -320,4 +451,4 @@ This is the beauty of ~updatecli~, given a version ~X~ tested by ~Y~, we update 
 
 * Footnotes
 
-[fn:1] For security reason, Updatecli doesn't pass the entire environment to the shell command but instead works with an allow list of environment variables. https://www.updatecli.io/docs/plugins/resource/shell/
+[fn:1] For security reasons, Updatecli doesn't pass the entire environment to the shell command but instead works with an allow list of environment variables. https://www.updatecli.io/docs/plugins/resource/shell/

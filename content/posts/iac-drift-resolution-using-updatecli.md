@@ -7,7 +7,7 @@ tags = ["updatecli", "iac"]
 draft = false
 +++
 
-Managing your infrastructure using Infrastructure-As-Code (IaC) offers mutliple benefits: version control, repeatability, code-review, disaster recovery.
+Managing your infrastructure using Infrastructure-As-Code (IaC) offers multiple benefits: version control, repeatability, code-review, disaster recovery.
 
 But what happens when external factors – database server version update, automatic upgrade of a key component from a cloud provider – modify your infrastructure outside of your IaC configuration?
 
@@ -41,7 +41,7 @@ The important part is the `automatic_upgrade_channel` argument that is set to pa
 
 ### Issue with the setup {#issue-with-the-setup}
 
-Anytime the cluster is auto-upgraded, we need to go in the configuration, update the value and rerun a `terraform apply`, otherwise we might revert the cluster to it's previous version.
+Anytime the cluster is auto-upgraded, we need to go in the configuration, update the value and rerun a `terraform apply`, otherwise we might revert the cluster to its previous version.
 
 ```bash
 ?> terraform plan
@@ -91,9 +91,9 @@ state, without changing any real infrastructure.
 -   You perform side-effect using [`action`](https://www.updatecli.io/docs/plugins/actions/github/)
 
 You compose those core elements into a pipeline manifest that updatecli can run
-![](/img/updatecli_pipeline.png)
+![updatecli pipeline: source, condition, target, and action stages](/img/updatecli_pipeline.png)
 
-One of the major benefits of `updatecli` is it's wide variety of plugins, for each core components, you can use different plugins:
+One of the major benefits of `updatecli` is its wide variety of plugins, for each core component, you can use different plugins:
 
 -   [`csv`](https://www.updatecli.io/docs/plugins/resource/csv/)
 -   [`helm chart`](https://www.updatecli.io/docs/plugins/resource/helm_chart/)
@@ -108,7 +108,7 @@ One of the major benefits of `updatecli` is it's wide variety of plugins, for ea
 
 #### Source {#source}
 
-To solve our issue, we first need to get the current version of the kubernetes cluster, this could done using [`azure-cli`](https://learn.microsoft.com/en-us/cli/azure/)
+To solve our issue, we first need to get the current version of the kubernetes cluster, this could be done using [`azure-cli`](https://learn.microsoft.com/en-us/cli/azure/)
 
 ```bash
 az aks show --resource-group rg-dev --name my-aks-cluster-dev --query kubernetesVersion | tr -d '"'
@@ -321,7 +321,7 @@ targets:
   update_cluster_version.yaml
 </div>
 
-We've added an `scm` configuration to pull our Infrastructure-As-Code configuration from our vsc. And we've added an `action` resource to create a pull request with our changes.
+We've added an `scm` configuration to pull our Infrastructure-As-Code configuration from our VCS. And we've added an `action` resource to create a pull request with our changes.
 
 
 ### Alternative {#alternative}
@@ -353,4 +353,4 @@ sources:
 
 This is the beauty of `updatecli`, given a version `X` tested by `Y`, we update `Z`, and `XYZ` can be any kind of plugins.
 
-[^fn:1]: For security reason, Updatecli doesn't pass the entire environment to the shell command but instead works with an allow list of environment variables. <https://www.updatecli.io/docs/plugins/resource/shell/>
+[^fn:1]: For security reasons, Updatecli doesn't pass the entire environment to the shell command but instead works with an allow list of environment variables. <https://www.updatecli.io/docs/plugins/resource/shell/>

@@ -12,11 +12,12 @@ title = "lois.postu.la"
 [params.author]
   name = "Loïs Postula"
   image = "img/author.png"
-  headline = "Yes, I'm a DevOps Engineer. No, I'm Not a Bot (Probably)."
-  bio = "Yes, I'm a DevOps Engineer. No, I'm Not a Bot (Probably)."
+  headline = "Platform engineer building reliable, self-hosted and cloud software systems."
+  bio = "Platform engineer working on infrastructure, build systems, CI/CD, security, and observability."
   links = [
     { email = "mailto:lois@postu.la" },
     { link = "https://lois.postu.la/" },
     { github = "https://github.com/loispostula" },
+    { linkedin = "https://www.linkedin.com/in/loispostula/" },
     { key = "https://lois.postu.la/key/loispostula.asc" }
    ]
