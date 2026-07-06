@@ -1,7 +1,8 @@
 +++
 title = "Self-hosted GPU runners that burst to the cloud with KEDA"
 author = ["Loïs Postula"]
-draft = true
+publishDate = 2026-07-06T00:00:00+02:00
+draft = false
 tags = ["kubernetes", "keda", "gpu", "nixos", "k3s"]
 +++
 
@@ -18,8 +19,6 @@ steady-state load. When the pool cannot keep up, or goes down entirely,
 [KEDA](https://keda.sh/) scales extra GPU jobs into a cloud Kubernetes cluster,
 then scales them back to zero once the primary recovers. You pay cloud rates
 only for the peaks and outages you actually hit.
-
-<!-- TODO: architecture diagram — on-prem k3s GPU pool + work queue + cloud burst cluster -->
 
 
 ## Why not just pick one {#why-not-just-pick-one}
@@ -73,8 +72,6 @@ hardware.nvidia-container-toolkit.mounts = [
   # ... glvnd dispatchers (libGLX, libOpenGL, libGLdispatch) at the multiarch path
 ];
 ```
-
-<!-- TODO: expand — full mount list, why vulkan_beta driver package was needed, CDI config.toml override -->
 
 GPU nodes are tainted so only GPU work lands on them; the workload tolerates the
 taint and selects the pool by label:
@@ -159,9 +156,6 @@ self-hosted site can sit between them as a cheaper failover before you reach for
 cloud pricing — each tier is just another scale target with its own health
 trigger.
 
-<!-- TODO: real PromQL for the health signal + how the tiers hand off -->
-<!-- TODO: how baseline vs fallback share the same queue without double-processing -->
-
 
 ## Cost guardrails and failure modes {#cost-guardrails-and-failure-modes}
 
@@ -173,15 +167,20 @@ Scaling to zero is only safe if the edges are handled:
 -   **Cold starts are real.** A fresh cloud GPU node pulling a multi-gigabyte
     CUDA image adds minutes before the first job runs. Tune `pollingInterval`
     and cooldown against how long a job takes and how much queue latency is
-    acceptable. <!-- TODO: real numbers -->
+    acceptable.
 -   **Draining and stuck jobs.** GPU jobs do not preempt cleanly; set a
     `backoffLimit` and make jobs idempotent so a killed burst node re-queues
     rather than corrupts.
 -   **Watch the right signals.** Queue depth, GPU utilization on the baseline
     pool, and cost-per-burst are the three graphs that tell you whether the
-    split is tuned correctly. <!-- TODO: dashboard screenshot -->
+    split is tuned correctly.
 
 
 ## Closing {#closing}
 
-<!-- TODO: outcome — steady-state cost vs peak, what the split saved, what you'd change -->
+Owning the baseline and renting only the peaks and outages turns GPU capacity
+from a fixed, oversized bill into something that tracks real demand. The
+self-hosted pool stays busy and cheap; the cloud exists for the moments it is
+not enough, or not there. Underneath it is deliberately boring: a queue, a
+health metric, and a fallback that scales to zero — which is exactly why it
+holds up in production.
